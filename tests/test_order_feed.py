@@ -1,7 +1,6 @@
 import allure
 import pytest
 
-from pages.constructor_page import ConstructorPage
 from pages.feed_page import FeedPage
 from pages.header import Header
 
@@ -13,14 +12,18 @@ class TestOrderFeed:
         "counter", [FeedPage.TOTAL, FeedPage.TODAY], ids=["all-time", "today"],
     )
     def test_completed_counter_increases(self, driver, signed_in_constructor, counter):
+        constructor = signed_in_constructor
         feed = FeedPage(driver)
         header = Header(driver)
         header.go_to_feed()
         before = feed.counter(counter)
 
         header.go_to_constructor()
-        number = signed_in_constructor.place_order()
-        signed_in_constructor.close_modal()
+        constructor.assemble_burger()
+        previous_number = constructor.order_number_before_submission()
+        constructor.submit_order()
+        number = constructor.wait_for_new_order_number(previous_number)
+        constructor.close_modal()
         header.go_to_feed()
 
         feed.wait_for_order_in_feed(number)
@@ -28,15 +31,19 @@ class TestOrderFeed:
 
     @allure.title("Номер оформленного заказа появляется в списке «В работе»")
     def test_order_appears_in_progress(self, driver, signed_in_constructor):
+        constructor = signed_in_constructor
         Header(driver).go_to_feed()
         feed = FeedPage(driver)
         feed.start_watching_in_progress()
-        feed_tab = driver.current_window_handle
+        feed_tab = feed.current_tab_handle()
 
-        driver.switch_to.new_window("tab")
-        constructor = ConstructorPage(driver)
-        constructor.open()
-        number = constructor.place_order()
+        constructor.open_in_new_tab()
+        constructor.assemble_burger()
+        previous_number = constructor.order_number_before_submission()
+        constructor.submit_order()
+        number = constructor.wait_for_new_order_number(previous_number)
 
-        driver.switch_to.window(feed_tab)
-        feed.wait_for_in_progress_order(number)
+        feed.switch_to_tab(feed_tab)
+        assert feed.wait_for_in_progress_order(number), (
+            f"Заказ №{number} не появился в списке «В работе»"
+        )

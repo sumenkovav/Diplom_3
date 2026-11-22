@@ -1,61 +1,51 @@
 import allure
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as conditions
+from selenium.common.exceptions import TimeoutException
 
+from locators import feed_page as locators
 from pages.base_page import BasePage
 
 
 class FeedPage(BasePage):
     PATH = "/feed"
-    HEADING = (By.XPATH, "//h1[normalize-space()='Лента заказов']")
-    IN_PROGRESS_LIST = (By.XPATH, "//p[normalize-space()='В работе:']/following-sibling::ul[2]")
     TOTAL = "Выполнено за все время"
     TODAY = "Выполнено за сегодня"
 
     def heading(self):
         self.wait_for_path(self.PATH)
-        return self.visible(self.HEADING).text
-
-    @staticmethod
-    def counter_locator(label):
-        return (
-            By.XPATH, f'//p[normalize-space()="{label}:"]/following-sibling::p[1]',
-        )
+        return self.text(locators.HEADING)
 
     def counter(self, label):
-        return int(self.visible(self.counter_locator(label)).text)
+        return int(self.text(locators.counter(label)))
 
     def wait_for_counter_increase(self, label, before):
+        locator = locators.counter(label)
+
+        def increased():
+            text = self.text_if_visible(locator)
+            if not text:
+                return False
+            current = int(text)
+            return current if current > before else False
+
         with allure.step(f"Проверяем увеличение счётчика «{label}»"):
-            locator = self.counter_locator(label)
-
-            def increased(driver):
-                current = int(driver.find_element(*locator).text)
-                return current if current > before else False
-
-            return self.wait.until(increased, f"Счётчик «{label}» не вырос после {before}")
+            return self.wait_for(increased, f"Счётчик «{label}» не вырос после {before}")
 
     def wait_for_order_in_feed(self, number):
-        locator = (
-            By.XPATH,
-            f'//a[starts-with(@href,"/feed/")]'
-            f'//p[normalize-space()="#0{number}"]',
-        )
         with allure.step(f"Находим оформленный заказ №{number} в ленте"):
-            self.wait.until(
-                conditions.visibility_of_element_located(locator),
+            self.visible(
+                locators.order_card(number),
                 f"Карточка заказа №{number} не появилась в ленте",
             )
 
     def start_watching_in_progress(self):
         with allure.step("Начинаем наблюдать за номерами в списке «В работе»"):
-            order_list = self.visible(self.IN_PROGRESS_LIST)
-            self.driver.execute_script(
+            order_list = self.visible(locators.IN_PROGRESS_LIST)
+            self.execute_script(
                 r"""
-                const orderList = arguments[0];
+                const [orderList, itemSelector] = arguments;
                 const observed = new Set();
                 const record = () => {
-                    for (const item of orderList.querySelectorAll("li")) {
+                    for (const item of orderList.querySelectorAll(itemSelector)) {
                         const text = item.textContent.trim();
                         if (/^\d+$/.test(text)) observed.add(Number(text));
                     }
@@ -67,14 +57,17 @@ class FeedPage(BasePage):
                 window.stellarOrdersInProgress = observed;
                 """,
                 order_list,
+                locators.IN_PROGRESS_ITEMS,
             )
 
-    def wait_for_in_progress_order(self, number):
+    def wait_for_in_progress_order(self, number) -> bool:
         with allure.step(f"Ищем заказ №{number} в списке «В работе»"):
-            self.wait.until(
-                lambda driver: driver.execute_script(
-                    "return window.stellarOrdersInProgress.has(arguments[0]);",
-                    number,
-                ),
-                f"Заказ №{number} не появился в списке «В работе»",
-            )
+            try:
+                return self.wait_for(
+                    lambda: self.execute_script(
+                        "return window.stellarOrdersInProgress.has(arguments[0]);",
+                        number,
+                    ),
+                )
+            except TimeoutException:
+                return False
